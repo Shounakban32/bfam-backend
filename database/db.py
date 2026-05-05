@@ -12,9 +12,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Connection ────────────────────────────────────────
+_url = os.getenv("DATABASE_URL")
 _host = os.getenv("DB_HOST")
-_host = None  # Force SQLite for testing
-if _host:
+
+if _url:
+    engine = create_engine(_url, pool_pre_ping=True)
+elif _host:
     _u = os.getenv("DB_USER")
     _p = os.getenv("DB_PASSWORD")
     _port = os.getenv("DB_PORT", "3306")
