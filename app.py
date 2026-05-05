@@ -713,7 +713,7 @@ def _user_dict(u: User) -> dict:
             "must_change_pw":u.must_change_pw,"last_login":u.last_login,
             "created_at":u.created_at,"created_by":u.created_by}
 
-@app.post("/setup/create-first-admin", tags=["Setup"])
+@app.get("/setup/create-first-admin", tags=["Setup"])
 def create_first_admin(db: Session = Depends(get_db)):
     if db.query(User).filter(User.role == "COE").first():
         raise HTTPException(400, "Admin already exists")
