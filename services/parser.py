@@ -14,8 +14,8 @@ logger = logging.getLogger("bfam.parser")
 MODULE_PATTERNS = [
     ("daily_whatsapp",  "wa_daily"),
     ("daily_savings",   "savings_daily"),
-    ("whatsapp_ytd",    "wa_ytd"),
-    ("whatsapp",        "wa_ytd"),
+    ("whatsapp_ytd",    "wa"),
+    ("whatsapp",        "wa"),
     ("savings",         "savings"),
     ("power_of_3",      "po3"),
     ("power of 3",      "po3"),
@@ -27,7 +27,7 @@ MODULE_PATTERNS = [
 
 # ── Sheet config per module ───────────────────────────
 SHEET_CONFIG = {
-    "wa_ytd": {
+    "wa": {
         "source_sheet": "BIC-DATA",
         "fallback_sheets": ["BIC-Data", "Sheet1"],
         "level": "bic",
