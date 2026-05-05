@@ -1,0 +1,36 @@
+2026-05-05 16:54:59,713 bfam.api INFO [App] BFAM API started
+2026-05-05 16:58:18,425 bfam.api INFO [App] BFAM API started
+2026-05-05 16:59:37,147 passlib.handlers.bcrypt WARNING (trapped) error reading bcrypt version
+Traceback (most recent call last):
+  File "C:\Users\USER\Music\APP4\bfam_v2_backend\bfam_v2\backend\venv\Lib\site-packages\passlib\handlers\bcrypt.py", line 620, in _load_backend_mixin
+    version = _bcrypt.__about__.__version__
+              ^^^^^^^^^^^^^^^^^
+AttributeError: module 'bcrypt' has no attribute '__about__'
+2026-05-05 17:00:48,010 passlib.handlers.bcrypt WARNING (trapped) error reading bcrypt version
+Traceback (most recent call last):
+  File "C:\Users\USER\Music\APP4\bfam_v2_backend\bfam_v2\backend\venv\Lib\site-packages\passlib\handlers\bcrypt.py", line 620, in _load_backend_mixin
+    version = _bcrypt.__about__.__version__
+              ^^^^^^^^^^^^^^^^^
+AttributeError: module 'bcrypt' has no attribute '__about__'
+2026-05-05 17:02:17,552 bfam.api INFO [App] BFAM API started
+2026-05-05 17:02:28,216 passlib.handlers.bcrypt WARNING (trapped) error reading bcrypt version
+Traceback (most recent call last):
+  File "C:\Users\USER\Music\APP4\bfam_v2_backend\bfam_v2\backend\venv\Lib\site-packages\passlib\handlers\bcrypt.py", line 620, in _load_backend_mixin
+    version = _bcrypt.__about__.__version__
+              ^^^^^^^^^^^^^^^^^
+AttributeError: module 'bcrypt' has no attribute '__about__'
+2026-05-05 17:03:37,049 bfam.api INFO [App] BFAM API shutdown
+2026-05-05 17:04:00,338 passlib.handlers.bcrypt WARNING (trapped) error reading bcrypt version
+Traceback (most recent call last):
+  File "C:\Users\USER\Music\APP4\bfam_v2_backend\bfam_v2\backend\venv\Lib\site-packages\passlib\handlers\bcrypt.py", line 620, in _load_backend_mixin
+    version = _bcrypt.__about__.__version__
+              ^^^^^^^^^^^^^^^^^
+AttributeError: module 'bcrypt' has no attribute '__about__'
+2026-05-05 17:06:48,781 bfam.api INFO [App] BFAM API shutdown
+2026-05-05 17:07:09,764 bfam.api INFO [App] BFAM API started
+2026-05-05 17:08:30,247 bfam.parser INFO [Parser] Sheet 'BIC-DATA' for savings_daily
+2026-05-05 17:08:30,563 bfam.processor INFO [Processor] savings_daily/2026-05-05: 49 rows written
+2026-05-05 17:09:35,488 bfam.parser INFO [Parser] Sheet 'BIC-DATA' for wa_daily
+2026-05-05 17:09:36,073 bfam.processor INFO [Processor] wa_daily/2026-05-05: 579 rows written
+2026-05-05 17:09:44,302 bfam.parser INFO [Parser] Sheet 'BIC-DATA' for wa_ytd
+2026-05-05 17:09:44,695 bfam.processor INFO [Processor] wa_ytd/2026-05-05: 298 rows written
