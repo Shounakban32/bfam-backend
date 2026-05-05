@@ -712,3 +712,20 @@ def _user_dict(u: User) -> dict:
             "has_bic_data":u.has_bic_data or False,"bic_emp_code":u.bic_emp_code,
             "must_change_pw":u.must_change_pw,"last_login":u.last_login,
             "created_at":u.created_at,"created_by":u.created_by}
+
+@app.post("/setup/create-first-admin", tags=["Setup"])
+def create_first_admin(db: Session = Depends(get_db)):
+    if db.query(User).filter(User.role == "COE").first():
+        raise HTTPException(400, "Admin already exists")
+    u = User(
+        emp_code="ADMIN001",
+        name="Admin",
+        role="COE",
+        hashed_password=hash_pw("Admin@1234"),
+        is_active=True,
+        must_change_pw=False,
+        created_by="system"
+    )
+    db.add(u)
+    db.commit()
+    return {"message": "Admin created", "emp_code": "ADMIN001", "password": "Admin@1234"}
