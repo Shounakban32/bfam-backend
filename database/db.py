@@ -13,6 +13,7 @@ load_dotenv()
 
 # ── Connection ────────────────────────────────────────
 _host = os.getenv("DB_HOST")
+_host = None  # Force SQLite for testing
 if _host:
     _u = os.getenv("DB_USER")
     _p = os.getenv("DB_PASSWORD")
