@@ -121,20 +121,19 @@ SHEET_CONFIG = {
         }
     },
     "sip": {
-        "source_sheet": "SIP-DATA",
-        "fallback_sheets": ["BIC-DATA", "Sheet1"],
-        "level": "bic",
-        "columns": {
-            "BIC":              "bic_name",
-            "EMPLOYEE CODE":    "emp_code",
-            "ARN_ACTIVATED":    "activation",
-            "TXN_COUNT":        "txn_count",
-            "INFLOWS":          "inflows",
-            "CLUSTER":          "cluster_name",
-            "CLUSTER MANAGER":  "manager_name",
-            "REGION":           "region_name",
-        }
-    },
+    "source_sheet": "SIP-DATA",
+    "fallback_sheets": ["SIP DATA"],
+    "level": "sip_raw",
+    "columns": {
+        "BIC_OWNER":        "bic_name",
+        "EMPLOYEE CODE":    "emp_code",
+        "SIP AMOUNT":       "inflows",
+        "AMOUNT":           "inflows",
+        "CLUSTER":          "cluster_name",
+        "CLUSTER MANAGER":  "manager_name",
+        "REGION":           "region_name",
+    }
+},
 }
 
 # Real regions — used to filter out system/unmapped entries
@@ -165,6 +164,26 @@ def identify_module(filename: str) -> str:
             return module
     return "unknown"
 
+def get_all_modules(filepath: Path) -> List[str]:
+    try:
+        wb = pd.ExcelFile(filepath, engine="openpyxl")
+        sheets = set(wb.sheet_names)
+        sheet_to_module = {
+            "Power of 3_BIC-DATA": "po3",
+            "Wealth SIP_BIC-DATA": "wsip",
+            "BIC-DATA":            "wa",
+            "SIP-DATA":            "sip",
+            "SIP DATA":            "sip",
+        }
+        modules, seen = [], set()
+        for sheet, mod in sheet_to_module.items():
+            if sheet in sheets and mod not in seen:
+                modules.append(mod)
+                seen.add(mod)
+        return modules if modules else [identify_module(filepath.name)]
+    except Exception as e:
+        logger.warning(f"[Parser] get_all_modules failed: {e}")
+        return [identify_module(filepath.name)]
 
 def _open_sheet(filepath: Path, module: str) -> pd.DataFrame:
     cfg = SHEET_CONFIG.get(module)

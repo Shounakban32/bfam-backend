@@ -407,22 +407,27 @@ async def upload_file(
         raw_dest.parent.mkdir(parents=True, exist_ok=True)
         raw_dest.write_bytes(contents)
 
-        parsed = parse_file(tmp_path, module, date_tag)
-        rows_parsed = parsed["row_count"]
-        errors.extend(parsed["errors"])
+        from services.parser import get_all_modules
+        modules_in_file = get_all_modules(tmp_path)
 
-        if rows_parsed > 0:
-            result = process_and_write(parsed, db, season_id=sid)
-            rows_written = result["rows_written"]
-            errors.extend(result["errors"])
-        else:
+        for mod in modules_in_file:
+            if mod == "unknown":
+                continue
+            mod_parsed = parse_file(tmp_path, mod, date_tag)
+            rows_parsed += mod_parsed["row_count"]
+            errors.extend(mod_parsed["errors"])
+            if mod_parsed["row_count"] > 0:
+                result = process_and_write(mod_parsed, db, season_id=sid)
+                rows_written += result["rows_written"]
+                errors.extend(result["errors"])
+
+        if rows_parsed == 0:
             upload_status = "failed"
             errors.append(
                 f"Zero rows parsed from '{filename}'. "
-                f"Check that the file has a 'BIC-DATA' sheet with data rows."
+                f"Check that the file has a recognised sheet."
             )
-
-        if errors and rows_written == 0:
+        elif errors and rows_written == 0:
             upload_status = "failed"
         elif errors:
             upload_status = "partial"
