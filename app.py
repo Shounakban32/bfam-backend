@@ -718,6 +718,86 @@ def _user_dict(u: User) -> dict:
             "must_change_pw":u.must_change_pw,"last_login":u.last_login,
             "created_at":u.created_at,"created_by":u.created_by}
 
+# ══ TRENDS & ACTIVITY ════════════════════════════════
+@app.get("/analytics/dates", tags=["Analytics"])
+def get_available_dates(module: str = "wa",
+                        u: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """Returns all dates that have data for a given module."""
+    rows = db.query(RegionData.date).filter(
+        RegionData.module == module
+    ).distinct().order_by(RegionData.date.asc()).all()
+    return {"module": module, "dates": [r[0] for r in rows]}
+
+
+@app.get("/analytics/trends", tags=["Analytics"])
+def get_trends(module: str = "wa",
+               metric: str = "inflows",
+               u: User = Depends(get_current_user),
+               db: Session = Depends(get_db)):
+    """
+    Returns metric values grouped by date for trend charts.
+    metric: inflows | txn_count | activation
+    """
+    rows = db.query(RegionData.date,
+                    func.sum(RegionData.inflows).label("inflows"),
+                    func.sum(RegionData.txn_count).label("txn_count"),
+                    func.sum(RegionData.activation).label("activation")
+                    ).filter(RegionData.module == module
+                    ).group_by(RegionData.date
+                    ).order_by(RegionData.date.asc()).all()
+    return {
+        "module": module,
+        "metric": metric,
+        "data": [{"date": r[0], "value": getattr(r, metric, 0) or 0} for r in rows]
+    }
+
+
+@app.get("/analytics/activity", tags=["Analytics"])
+def get_daily_activity(module: str = "wa",
+                       u: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    """
+    Returns per-date summary: total inflows, txn, activation,
+    top BIC of the day, and upload info.
+    """
+    # Get all dates with data
+    date_rows = db.query(
+        RegionData.date,
+        func.sum(RegionData.inflows).label("inflows"),
+        func.sum(RegionData.txn_count).label("txn_count"),
+        func.sum(RegionData.activation).label("activation")
+    ).filter(RegionData.module == module
+    ).group_by(RegionData.date
+    ).order_by(RegionData.date.desc()).all()
+
+    result = []
+    for row in date_rows:
+        # Top BIC for that date
+        top_bic = db.query(BICData).filter(
+            BICData.module == module,
+            BICData.date == row[0]
+        ).order_by(BICData.inflows.desc()).first()
+
+        # Upload log for that date
+        upload = db.query(UploadLog).filter(
+            UploadLog.date_tag == row[0],
+            UploadLog.module == module
+        ).first()
+
+        result.append({
+            "date":         row[0],
+            "inflows":      row[1] or 0,
+            "txn_count":    row[2] or 0,
+            "activation":   row[3] or 0,
+            "top_bic":      top_bic.bic_name if top_bic else None,
+            "top_bic_inflows": top_bic.inflows if top_bic else 0,
+            "uploaded_by":  upload.uploaded_by if upload else None,
+            "uploaded_at":  upload.uploaded_at.isoformat() if upload else None,
+            "rows_written": upload.rows_written if upload else 0,
+        })
+    return {"module": module, "activity": result}
+
 @app.get("/setup/create-first-admin", tags=["Setup"])
 def create_first_admin(db: Session = Depends(get_db)):
     if db.query(User).filter(User.role == "COE").first():
