@@ -22,7 +22,7 @@ from database.db import (get_db, init_db, SessionLocal,
     User, Season, BICData, ClusterData, RegionData,
     DailySnapshot, TargetData, GamificationConfig,
     UploadLog, AuditLog)
-from services.parser import parse_file, identify_module
+from services.parser import parse_file, parse_data_sheet, identify_module, get_all_modules
 from services.processor import process_and_write
 
 load_dotenv()
@@ -407,7 +407,6 @@ async def upload_file(
         raw_dest.parent.mkdir(parents=True, exist_ok=True)
         raw_dest.write_bytes(contents)
 
-        from services.parser import get_all_modules
         modules_in_file = get_all_modules(tmp_path)
 
         for mod in modules_in_file:
@@ -418,6 +417,17 @@ async def upload_file(
             errors.extend(mod_parsed["errors"])
             if mod_parsed["row_count"] > 0:
                 result = process_and_write(mod_parsed, db, season_id=sid)
+                rows_written += result["rows_written"]
+                errors.extend(result["errors"])
+
+        # ── Pass 2: DATA sheets (raw transactions by TRDATE) ─
+        for mod in modules_in_file:
+            if mod == "unknown":
+                continue
+            data_parsed = parse_data_sheet(tmp_path, mod)
+            if data_parsed["row_count"] > 0:
+                rows_parsed += data_parsed["row_count"]
+                result = process_and_write(data_parsed, db, season_id=sid)
                 rows_written += result["rows_written"]
                 errors.extend(result["errors"])
 

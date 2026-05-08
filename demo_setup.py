@@ -442,6 +442,15 @@ BIC_USERS = [
     ("75809","Yogesh Bediskar","Gujarat","Surat"),
     ("75390","Yogesh Bhalgama","Gujarat","Ahmedabad"),
     ("75547","Yogesh Sakpal","","Virtual"),
+    ("00116","Ashish Thakur","Punjab, Haryana, Himachal Pradesh, Jammu Kashmir","Chandigarh"),
+    ("00117","Prashant Dhanawade","Delhi, NCR","NCR"),
+    ("00068","Somesh Nivalkar","Mumbai","Mumbai"),
+    ("00137","Muskan Kumari","Uttar Pradesh, Uttarakhand","Lucknow"),
+    ("00136","Avinash Kamanaboina","Rest of Maharashtra, Goa","Pune"),
+    ("00083","Satyaprakash Mishra","Bihar, Jharkhand, Orissa, Chattisgarh","Rest Of Bihar"),
+    ("00142","Spandan Sabat","Bihar, Jharkhand, Orissa, Chattisgarh","Orissa"),
+    ("00125","Karthik K","Kerala","Kerala"),
+    ("00105","Uttam Kumar","Bihar, Jharkhand, Orissa, Chattisgarh","Jharkhand"),
 ]
 
 # Create users
