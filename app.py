@@ -798,6 +798,41 @@ def get_daily_activity(module: str = "wa",
         })
     return {"module": module, "activity": result}
 
+@app.delete("/data/delete", tags=["Data"])
+def delete_data_by_date(
+    module: str,
+    date: str,
+    u: User = Depends(require_coe),
+    db: Session = Depends(get_db)
+):
+    deleted_counts = {}
+
+    r = db.query(RegionData).filter(RegionData.module == module, RegionData.date == date)
+    deleted_counts["region_rows"] = r.count()
+    r.delete(synchronize_session=False)
+
+    b = db.query(BICData).filter(BICData.module == module, BICData.date == date)
+    deleted_counts["bic_rows"] = b.count()
+    b.delete(synchronize_session=False)
+
+    c = db.query(ClusterData).filter(ClusterData.module == module, ClusterData.date == date)
+    deleted_counts["cluster_rows"] = c.count()
+    c.delete(synchronize_session=False)
+
+    ul = db.query(UploadLog).filter(UploadLog.module == module, UploadLog.date_tag == date)
+    deleted_counts["upload_logs"] = ul.count()
+    ul.delete(synchronize_session=False)
+
+    db.commit()
+
+    _audit(db, u.emp_code, "DELETE_DATA", "module_date", f"{module}/{date}",
+           old_val=None, new_val=deleted_counts,
+           notes=f"Deleted all data for module={module} date={date}")
+
+    logger.info(f"[Delete] {u.emp_code} deleted {module}/{date}: {deleted_counts}")
+    return {"message": f"Data deleted for {module} on {date}", "deleted": deleted_counts}
+
+
 @app.get("/setup/create-first-admin", tags=["Setup"])
 def create_first_admin(db: Session = Depends(get_db)):
     if db.query(User).filter(User.role == "COE").first():
