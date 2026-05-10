@@ -808,6 +808,82 @@ def get_daily_activity(module: str = "wa",
         })
     return {"module": module, "activity": result}
 
+@app.get("/my/performance", tags=["Analytics"])
+def get_my_performance(
+    u: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns the logged-in BIC's own performance across all modules and all dates.
+    Uses the JWT token to identify the BIC via bic_emp_code or emp_code.
+    """
+    # Resolve which emp_code to look up in BICData
+    bic_code = u.bic_emp_code if u.bic_emp_code else u.emp_code
+
+    rows = db.query(BICData).filter(
+        BICData.emp_code == bic_code
+    ).order_by(BICData.date.asc(), BICData.module.asc()).all()
+
+    if not rows:
+        return {
+            "emp_code": bic_code,
+            "name": u.name,
+            "history": [],
+            "totals": {}
+        }
+
+    # Group by date
+    date_map = {}
+    for r in rows:
+        if r.date not in date_map:
+            date_map[r.date] = {}
+        date_map[r.date][r.module] = {
+            "txn":        r.txn_count  or 0,
+            "inflows":    r.inflows    or 0,
+            "activation": r.activation or 0,
+            "sip_count":  r.sip_count  or 0,
+            "points_ytd": r.points_ytd or 0,
+            "streak":     r.streak_days or 0,
+        }
+
+    # Build history list with cumulative points
+    history = []
+    cumulative_pts = 0
+    for date in sorted(date_map.keys()):
+        day_pts = sum(
+            date_map[date][m].get("points_ytd", 0)
+            for m in date_map[date]
+        )
+        cumulative_pts += day_pts
+        history.append({
+            "date":          date,
+            "modules":       date_map[date],
+            "day_points":    day_pts,
+            "cumul_points":  cumulative_pts,
+        })
+
+    # Per-module totals across all dates
+    totals = {}
+    for mod in ["wa", "savings", "po3", "wsip", "sip"]:
+        totals[mod] = {
+            "txn":     sum(date_map[d].get(mod, {}).get("txn", 0)     for d in date_map),
+            "inflows": sum(date_map[d].get(mod, {}).get("inflows", 0) for d in date_map),
+            "points":  sum(date_map[d].get(mod, {}).get("points_ytd",0) for d in date_map),
+        }
+
+    # Latest streak (from the most recent row)
+    latest_row = rows[-1]
+
+    return {
+        "emp_code":   bic_code,
+        "name":       u.name,
+        "streak":     latest_row.streak_days or 0,
+        "badge":      _badge(cumulative_pts),
+        "history":    history,
+        "totals":     totals,
+        "total_pts":  cumulative_pts,
+    }
+
 @app.delete("/data/delete", tags=["Data"])
 def delete_data_by_date(
     module: str,
