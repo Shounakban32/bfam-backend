@@ -832,6 +832,117 @@ def get_my_performance(
             "totals": {}
         }
 
+@app.get("/my/rankings", tags=["Analytics"])
+def get_my_rankings(
+    module: str = "wa",
+    u: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    bic_code = u.bic_emp_code if u.bic_emp_code else u.emp_code
+
+    # ── Region Rankings ──────────────────────────────────
+    region_rows = db.query(
+        RegionData.region_name,
+        func.sum(RegionData.inflows).label("inflows"),
+        func.sum(RegionData.txn_count).label("txn_count"),
+        func.sum(RegionData.activation).label("activation")
+    ).filter(RegionData.module == module
+    ).group_by(RegionData.region_name
+    ).order_by(func.sum(RegionData.inflows).desc()).all()
+
+    all_regions = [
+        {"rank": i+1, "name": r[0], "inflows": r[1] or 0,
+         "txn": r[2] or 0, "activation": r[3] or 0}
+        for i, r in enumerate(region_rows)
+    ]
+    top3_regions = all_regions[:3]
+    own_region_entry = next((r for r in all_regions if r["name"] == u.region), None)
+    own_region_in_top3 = own_region_entry and own_region_entry["rank"] <= 3
+
+    # ── Cluster Rankings ─────────────────────────────────
+    cluster_rows = db.query(
+        ClusterData.cluster_name,
+        func.sum(ClusterData.inflows).label("inflows"),
+        func.sum(ClusterData.txn_count).label("txn_count"),
+        func.sum(ClusterData.activation).label("activation")
+    ).filter(ClusterData.module == module
+    ).group_by(ClusterData.cluster_name
+    ).order_by(func.sum(ClusterData.inflows).desc()).all()
+
+    all_clusters = [
+        {"rank": i+1, "name": r[0], "inflows": r[1] or 0,
+         "txn": r[2] or 0, "activation": r[3] or 0}
+        for i, r in enumerate(cluster_rows)
+    ]
+    top3_clusters = all_clusters[:3]
+    own_cluster_entry = next((c for c in all_clusters if c["name"] == u.cluster), None)
+    own_cluster_in_top3 = own_cluster_entry and own_cluster_entry["rank"] <= 3
+
+    # ── BIC Rankings — own cluster only ──────────────────
+    cluster_bic_rows = db.query(
+        BICData.emp_code,
+        BICData.bic_name,
+        func.sum(BICData.inflows).label("inflows"),
+        func.sum(BICData.txn_count).label("txn_count"),
+        func.sum(BICData.activation).label("activation"),
+        func.sum(BICData.points_ytd).label("points")
+    ).filter(
+        BICData.module == module,
+        BICData.cluster_name == u.cluster
+    ).group_by(BICData.emp_code, BICData.bic_name
+    ).order_by(func.sum(BICData.inflows).desc()).all()
+
+    cluster_bics = [
+        {"cluster_rank": i+1, "emp_code": r[0], "name": r[1],
+         "inflows": r[2] or 0, "txn": r[3] or 0,
+         "activation": r[4] or 0, "points": r[5] or 0,
+         "is_me": r[0] == bic_code}
+        for i, r in enumerate(cluster_bic_rows)
+    ]
+
+    # ── Personal Ranks ────────────────────────────────────
+    all_bic_rows = db.query(
+        BICData.emp_code,
+        BICData.cluster_name,
+        BICData.region_name,
+        func.sum(BICData.inflows).label("inflows")
+    ).filter(BICData.module == module
+    ).group_by(BICData.emp_code, BICData.cluster_name, BICData.region_name
+    ).order_by(func.sum(BICData.inflows).desc()).all()
+
+    overall_rank = next(
+        (i+1 for i, r in enumerate(all_bic_rows) if r[0] == bic_code), None)
+
+    region_bics = [r for r in all_bic_rows if r[2] == u.region]
+    region_rank = next(
+        (i+1 for i, r in enumerate(region_bics) if r[0] == bic_code), None)
+
+    cluster_rank = next(
+        (b["cluster_rank"] for b in cluster_bics if b["is_me"]), None)
+
+    return {
+        "module": module,
+        "regions": {
+            "top3": top3_regions,
+            "own": own_region_entry,
+            "own_in_top3": own_region_in_top3
+        },
+        "clusters": {
+            "top3": top3_clusters,
+            "own": own_cluster_entry,
+            "own_in_top3": own_cluster_in_top3
+        },
+        "bic_cluster_rankings": cluster_bics,
+        "personal_ranks": {
+            "overall": overall_rank,
+            "region": region_rank,
+            "cluster": cluster_rank,
+            "total_bics_org": len(all_bic_rows),
+            "total_bics_region": len(region_bics),
+            "total_bics_cluster": len(cluster_bics)
+        }
+    }
+
     # Group by date
     date_map = {}
     for r in rows:
