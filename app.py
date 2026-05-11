@@ -242,8 +242,11 @@ def get_kpi(module: str="wa", date: Optional[str]=None,
     ti = sum(r.inflows or 0 for r in rows)
     tt = sum(r.txn_count or 0 for r in rows)
     ta = sum(r.activation or 0 for r in rows)
+    tgs = sum(r.gross_sales or 0 for r in rows)
+    tns = sum(r.net_sales or 0 for r in rows)
     return {"module":module,"date":date,"total_inflows":ti,"total_txn":tt,
             "total_activation":ta,"avg_ticket":round(ti/tt,2) if tt else 0,
+            "total_gross_sales":tgs,"total_net_sales":tns,
             "top_region":max(rows,key=lambda r:r.inflows or 0).region_name,
             "regions_active":len(rows)}
 
@@ -255,7 +258,8 @@ def region_rankings(module:str="wa", date:Optional[str]=None, sort_by:str="inflo
     date = date or latest_date(db, module)
     rows = db.query(RegionData).filter(RegionData.module==module, RegionData.date==date).all()
     data = [{"region_name":r.region_name,"inflows":r.inflows or 0,"txn_count":r.txn_count or 0,
-             "activation":r.activation or 0,"avg_ticket":r.avg_ticket or 0} for r in rows]
+             "activation":r.activation or 0,"avg_ticket":r.avg_ticket or 0,
+             "gross_sales":r.gross_sales or 0,"net_sales":r.net_sales or 0} for r in rows]
     data.sort(key=lambda x: x.get(sort_by) or 0, reverse=True)
     for i,d in enumerate(data): d["rank"]=i+1
     return {"module":module,"date":date,"count":len(data),"rankings":data}
@@ -268,7 +272,8 @@ def cluster_rankings(module:str="wa", date:Optional[str]=None, sort_by:str="infl
     rows = db.query(ClusterData).filter(ClusterData.module==module, ClusterData.date==date).all()
     data = [{"cluster_name":r.cluster_name,"manager_name":r.manager_name,"region_name":r.region_name,
              "inflows":r.inflows or 0,"txn_count":r.txn_count or 0,"activation":r.activation or 0,
-             "avg_ticket":r.avg_ticket or 0} for r in rows]
+             "avg_ticket":r.avg_ticket or 0,
+             "gross_sales":r.gross_sales or 0,"net_sales":r.net_sales or 0} for r in rows]
     data.sort(key=lambda x: x.get(sort_by) or 0, reverse=True)
     for i,d in enumerate(data): d["rank"]=i+1
     return {"module":module,"date":date,"count":len(data),"rankings":data}
@@ -283,6 +288,7 @@ def bic_rankings(module:str="wa", date:Optional[str]=None, sort_by:str="inflows"
              "manager_name":r.manager_name,"region_name":r.region_name,
              "inflows":r.inflows or 0,"txn_count":r.txn_count or 0,
              "activation":r.activation or 0,"avg_ticket":r.avg_ticket or 0,
+             "gross_sales":r.gross_sales or 0,"net_sales":r.net_sales or 0,
              "sip_count":r.sip_count or 0,"streak_days":r.streak_days or 0,
              "points_ytd":r.points_ytd or 0,"badge":_badge(r.points_ytd)} for r in rows]
     data.sort(key=lambda x: x.get(sort_by) or 0, reverse=True)
@@ -516,25 +522,27 @@ def export_rankings(module:str="wa", view:str="bic", date:Optional[str]=None,
     if view == "bic":
         rows = db.query(BICData).filter(BICData.module==module, BICData.date==date)\
                  .order_by(BICData.points_ytd.desc()).all()
-        headers = ["Rank","Emp Code","BIC Name","Cluster","Region","Inflows","TXN","Activation","Avg Ticket","Points"]
+        headers = ["Rank","Emp Code","BIC Name","Cluster","Region","Inflows","Gross Sales","Net Sales","TXN","Activation","Avg Ticket","Points"]
         for c,h in enumerate(headers): ws.write(0,c,h,hdr_fmt)
         for i,r in enumerate(rows):
             ws.write(i+1,0,i+1,row_fmt); ws.write(i+1,1,r.emp_code,row_fmt)
             ws.write(i+1,2,r.bic_name,row_fmt); ws.write(i+1,3,r.cluster_name,row_fmt)
             ws.write(i+1,4,r.region_name,row_fmt); ws.write(i+1,5,r.inflows or 0,num_fmt)
-            ws.write(i+1,6,r.txn_count or 0,row_fmt); ws.write(i+1,7,r.activation or 0,row_fmt)
-            ws.write(i+1,8,r.avg_ticket or 0,num_fmt); ws.write(i+1,9,r.points_ytd or 0,num_fmt)
+            ws.write(i+1,6,r.gross_sales or 0,num_fmt); ws.write(i+1,7,r.net_sales or 0,num_fmt)
+            ws.write(i+1,8,r.txn_count or 0,row_fmt); ws.write(i+1,9,r.activation or 0,row_fmt)
+            ws.write(i+1,10,r.avg_ticket or 0,num_fmt); ws.write(i+1,11,r.points_ytd or 0,num_fmt)
     else:
         rows = db.query(RegionData).filter(RegionData.module==module, RegionData.date==date)\
                  .order_by(RegionData.inflows.desc()).all()
-        headers = ["Rank","Region","Inflows","TXN","Activation","Avg Ticket"]
+        headers = ["Rank","Region","Inflows","Gross Sales","Net Sales","TXN","Activation","Avg Ticket"]
         for c,h in enumerate(headers): ws.write(0,c,h,hdr_fmt)
         for i,r in enumerate(rows):
             ws.write(i+1,0,i+1,row_fmt); ws.write(i+1,1,r.region_name,row_fmt)
-            ws.write(i+1,2,r.inflows or 0,num_fmt); ws.write(i+1,3,r.txn_count or 0,row_fmt)
-            ws.write(i+1,4,r.activation or 0,row_fmt); ws.write(i+1,5,r.avg_ticket or 0,num_fmt)
+            ws.write(i+1,2,r.inflows or 0,num_fmt); ws.write(i+1,3,r.gross_sales or 0,num_fmt)
+            ws.write(i+1,4,r.net_sales or 0,num_fmt); ws.write(i+1,5,r.txn_count or 0,row_fmt)
+            ws.write(i+1,6,r.activation or 0,row_fmt); ws.write(i+1,7,r.avg_ticket or 0,num_fmt)
 
-    ws.set_column(0,9,15)
+    ws.set_column(0,11,15)
     wb.close()
     output.seek(0)
 
@@ -752,7 +760,9 @@ def get_trends(module: str = "wa",
     rows = db.query(RegionData.date,
                     func.sum(RegionData.inflows).label("inflows"),
                     func.sum(RegionData.txn_count).label("txn_count"),
-                    func.sum(RegionData.activation).label("activation")
+                    func.sum(RegionData.activation).label("activation"),
+                    func.sum(RegionData.gross_sales).label("gross_sales"),
+                    func.sum(RegionData.net_sales).label("net_sales")
                     ).filter(RegionData.module == module
                     ).group_by(RegionData.date
                     ).order_by(RegionData.date.asc()).all()
@@ -949,12 +959,14 @@ def get_my_rankings(
         if r.date not in date_map:
             date_map[r.date] = {}
         date_map[r.date][r.module] = {
-            "txn":        r.txn_count  or 0,
-            "inflows":    r.inflows    or 0,
-            "activation": r.activation or 0,
-            "sip_count":  r.sip_count  or 0,
-            "points_ytd": r.points_ytd or 0,
-            "streak":     r.streak_days or 0,
+            "txn":         r.txn_count   or 0,
+            "inflows":     r.inflows     or 0,
+            "activation":  r.activation  or 0,
+            "sip_count":   r.sip_count   or 0,
+            "points_ytd":  r.points_ytd  or 0,
+            "streak":      r.streak_days or 0,
+            "gross_sales": r.gross_sales or 0,
+            "net_sales":   r.net_sales   or 0,
         }
 
     # Build history list with cumulative points
@@ -977,9 +989,11 @@ def get_my_rankings(
     totals = {}
     for mod in ["wa", "savings", "po3", "wsip", "sip"]:
         totals[mod] = {
-            "txn":     sum(date_map[d].get(mod, {}).get("txn", 0)     for d in date_map),
-            "inflows": sum(date_map[d].get(mod, {}).get("inflows", 0) for d in date_map),
-            "points":  sum(date_map[d].get(mod, {}).get("points_ytd",0) for d in date_map),
+            "txn":         sum(date_map[d].get(mod, {}).get("txn", 0)          for d in date_map),
+            "inflows":     sum(date_map[d].get(mod, {}).get("inflows", 0)      for d in date_map),
+            "points":      sum(date_map[d].get(mod, {}).get("points_ytd", 0)   for d in date_map),
+            "gross_sales": sum(date_map[d].get(mod, {}).get("gross_sales", 0)  for d in date_map),
+            "net_sales":   sum(date_map[d].get(mod, {}).get("net_sales", 0)    for d in date_map),
         }
 
     # Latest streak (from the most recent row)
