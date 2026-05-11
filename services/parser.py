@@ -107,6 +107,7 @@ DATA_SHEET_COLUMNS = {
     "EMPLOYEE CODE": "emp_code", "SUB-TRTYPE": "sub_trtype",
     "TRTYPE": "trtype", "CLUSTER": "cluster_name",
     "CLUSTER MANAGER": "manager_name", "REGION": "region_name",
+    "TRS_AGENT": "trs_agent",
 }
 
 SIP_DATA_COLUMNS = {
@@ -301,6 +302,7 @@ def parse_data_sheet(filepath: Path, module: str) -> Dict:
     """
     errors: List[str] = []
     records: List[Dict] = []
+    arn_data_arns: List[str] = []
 
     try:
         wb = pd.ExcelFile(filepath, engine="openpyxl")
@@ -319,22 +321,36 @@ def parse_data_sheet(filepath: Path, module: str) -> Dict:
             # All other modules: read DATA sheet
             if 'DATA' not in available:
                 logger.info(f"[Parser] No DATA sheet in {filepath.name}")
-                return {"module": module, "level": "data_raw", "records": [], "row_count": 0, "errors": []}
+                return {"module": module, "level": "data_raw", "records": [], "row_count": 0, "errors": [], "arn_data_arns": []}
             df = pd.read_excel(filepath, sheet_name='DATA', engine="openpyxl")
             df = _process_data_df(df, DATA_SHEET_COLUMNS, module)
             records.extend(df.to_dict(orient='records'))
             logger.info(f"[Parser] 'DATA' {module} → {len(df)} rows")
+
+            # Read ARN-DATA sheet if present
+            if 'ARN-DATA' in available:
+                try:
+                    arn_df = pd.read_excel(filepath, sheet_name='ARN-DATA', engine="openpyxl")
+                    arn_df.columns = [str(c).strip().upper() for c in arn_df.columns]
+                    if 'BROKER' in arn_df.columns:
+                        raw_arns = arn_df['BROKER'].astype(str).str.strip()
+                        arn_data_arns = [a for a in raw_arns if a and a.lower() not in ('nan', 'none', '')]
+                        logger.info(f"[Parser] 'ARN-DATA' → {len(arn_data_arns)} ARNs")
+                except Exception as e:
+                    errors.append(f"ARN-DATA sheet error: {e}")
+                    logger.warning(f"[Parser] ARN-DATA read error: {e}")
 
     except Exception as e:
         errors.append(f"DATA sheet error: {e}")
         logger.exception(f"[Parser] DATA sheet error for {module}: {e}")
 
     return {
-        "module":    module,
-        "level":     "data_raw",
-        "records":   records,
-        "row_count": len(records),
-        "errors":    errors,
+        "module":        module,
+        "level":         "data_raw",
+        "records":       records,
+        "row_count":     len(records),
+        "errors":        errors,
+        "arn_data_arns": arn_data_arns,
     }
 
 

@@ -16,8 +16,19 @@ OUTFLOW_TYPES = {
     "SYSTEMATIC WITHDRAWAL", "SYSTEMATIC WITHDRAWAL PLAN"
 }
 
+INFLOW_TRTYPES     = {"PURCHASE", "SIP", "SWITCH-IN", "SWITCHIN", "SWITCH IN"}
+ACTIVATION_TRTYPES = {"PURCHASE", "SWITCH-IN", "SWITCHIN", "SWITCH IN"}
+
 def _is_outflow(sub_trtype: str) -> bool:
     return any(o in sub_trtype.upper() for o in OUTFLOW_TYPES)
+
+def _is_inflow_trtype(trtype: str) -> bool:
+    t = trtype.upper().strip()
+    return any(it in t for it in INFLOW_TRTYPES)
+
+def _is_activation_trtype(trtype: str) -> bool:
+    t = trtype.upper().strip()
+    return any(at in t for at in ACTIVATION_TRTYPES)
 
 
 def _get_config(db: Session) -> Dict:
@@ -113,20 +124,27 @@ def _name_to_empcode_map(db: Session) -> Dict[str, str]:
     return {name.strip(): ec for ec, name in rows if name}
 
 
-def aggregate_raw_data(records: List[Dict], db: Session) -> List[Dict]:
-    """
-    Aggregate raw transaction records (from DATA sheets) by trdate + BIC.
-    Returns one record per BIC per date with txn_count and inflows summed.
-    Looks up emp_code by name for records missing it.
-    """
-    name_map = _name_to_empcode_map(db)
-
-    # Group by (trdate, emp_code or bic_name)
-    groups: Dict = defaultdict(lambda: {
+def _new_group() -> Dict:
+    return {
         "txn_count": 0, "inflows": 0.0, "gross_sales": 0.0, "outflows": 0.0,
         "bic_name": "", "emp_code": "",
-        "cluster_name": "", "manager_name": "", "region_name": ""
-    })
+        "cluster_name": "", "manager_name": "", "region_name": "",
+        "activation_arns": set(),
+    }
+
+
+def aggregate_raw_data(records: List[Dict], db: Session, arn_data_arns: List[str] = None) -> List[Dict]:
+    """
+    Aggregate raw transaction records (from DATA sheets) by trdate + BIC.
+    - inflows and txn_count: only TRTYPE Purchase, SIP, Switch-In
+    - activation: unique TRS_AGENT ARNs from Purchase + Switch-In rows,
+                  merged with ARN-DATA BROKER ARNs (deduped globally, attributed per BIC)
+    """
+    name_map = _name_to_empcode_map(db)
+    arn_base_set = set(arn_data_arns or [])
+
+    # Group by (trdate, emp_code or bic_name)
+    groups: Dict = defaultdict(_new_group)
 
     for r in records:
         ec        = str(r.get("emp_code", "")).strip()
@@ -145,18 +163,26 @@ def aggregate_raw_data(records: List[Dict], db: Session) -> List[Dict]:
 
         g = groups[key]
         amount = float(r.get("inflows", 0) or 0)
-        sub_tr = str(r.get("sub_trtype", "") or r.get("trtype", "") or "").strip()
+        trtype = str(r.get("trtype", "") or "").strip()
+        sub_tr = str(r.get("sub_trtype", "") or trtype or "").strip()
 
-        g["txn_count"] += 1
-        g["inflows"]   += amount
-        if _is_outflow(sub_tr):
-            g["outflows"] += amount
-        else:
-            g["gross_sales"] += amount
+        # Points 1 & 2: only count inflows/txn for Purchase, SIP, Switch-In
+        if _is_inflow_trtype(trtype):
+            g["txn_count"] += 1
+            g["inflows"]   += amount
+            if _is_outflow(sub_tr):
+                g["outflows"] += amount
+            else:
+                g["gross_sales"] += amount
 
-        g["bic_name"]  = g["bic_name"] or bic_name
-        g["emp_code"]  = g["emp_code"] or ec
-        # Use first non-empty cluster/region/manager found for this BIC
+        # Point 4: collect ARNs for activation (Purchase + Switch-In only, SIP excluded)
+        if _is_activation_trtype(trtype):
+            trs_agent = str(r.get("trs_agent", "") or "").strip()
+            if trs_agent and trs_agent.lower() not in ("nan", "none", ""):
+                g["activation_arns"].add(trs_agent)
+
+        g["bic_name"] = g["bic_name"] or bic_name
+        g["emp_code"] = g["emp_code"] or ec
         for f in ["cluster_name", "manager_name", "region_name"]:
             if not g[f] and r.get(f):
                 g[f] = str(r[f]).strip()
@@ -168,6 +194,10 @@ def aggregate_raw_data(records: List[Dict], db: Session) -> List[Dict]:
             continue
         gross = round(g["gross_sales"], 2)
         net   = round(gross - g["outflows"], 2)
+        # Point 4: merge this BIC's transaction ARNs with the ARN-DATA base set, dedup
+        merged_arns = g["activation_arns"] | arn_base_set
+        activation  = len(merged_arns)
+
         result.append({
             "trdate":       trdate,
             "date":         trdate,
@@ -180,7 +210,7 @@ def aggregate_raw_data(records: List[Dict], db: Session) -> List[Dict]:
             "inflows":      round(g["inflows"], 2),
             "gross_sales":  gross,
             "net_sales":    net,
-            "activation":   0,
+            "activation":   activation,
             "sip_count":    g["txn_count"],
             "avg_ticket":   round(g["inflows"] / g["txn_count"], 2) if g["txn_count"] else 0,
         })
@@ -200,7 +230,7 @@ def process_and_write(parsed: Dict, db: Session, season_id: int = None) -> Dict:
 
     # For raw DATA records: aggregate by date+BIC first
     if level == "data_raw":
-        records = aggregate_raw_data(records, db)
+        records = aggregate_raw_data(records, db, arn_data_arns=parsed.get("arn_data_arns", []))
         if not records:
             return {"rows_written": 0, "errors": errors + ["No valid records after aggregation"]}
 
