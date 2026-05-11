@@ -11,6 +11,14 @@ from database.db import (BICData, ClusterData, RegionData,
 
 logger = logging.getLogger("bfam.processor")
 
+OUTFLOW_TYPES = {
+    "REDEMPTION", "SWITCH OUT", "SWITCH-OUT", "SWP",
+    "SYSTEMATIC WITHDRAWAL", "SYSTEMATIC WITHDRAWAL PLAN"
+}
+
+def _is_outflow(sub_trtype: str) -> bool:
+    return any(o in sub_trtype.upper() for o in OUTFLOW_TYPES)
+
 
 def _get_config(db: Session) -> Dict:
     cfg = db.query(GamificationConfig).first()
@@ -74,9 +82,9 @@ def _rollup_clusters(records: List[Dict]) -> List[Dict]:
             cls[key] = {"cluster_name": r.get("cluster_name", ""),
                         "manager_name": r.get("manager_name", ""),
                         "region_name":  r.get("region_name", ""),
-                        "inflows": 0, "net_sales": 0, "txn_count": 0,
-                        "activation": 0, "sip_count": 0}
-        for f in ["inflows", "net_sales", "txn_count", "activation", "sip_count"]:
+                        "inflows": 0, "gross_sales": 0, "net_sales": 0,
+                        "txn_count": 0, "activation": 0, "sip_count": 0}
+        for f in ["inflows", "gross_sales", "net_sales", "txn_count", "activation", "sip_count"]:
             cls[key][f] += r.get(f, 0) or 0
     result = list(cls.values())
     for c in result:
@@ -89,9 +97,9 @@ def _rollup_regions(clusters: List[Dict]) -> List[Dict]:
     for c in clusters:
         key = c.get("region_name", "")
         if key not in rgn:
-            rgn[key] = {"region_name": key, "inflows": 0, "net_sales": 0,
-                        "txn_count": 0, "activation": 0, "sip_count": 0}
-        for f in ["inflows", "net_sales", "txn_count", "activation", "sip_count"]:
+            rgn[key] = {"region_name": key, "inflows": 0, "gross_sales": 0,
+                        "net_sales": 0, "txn_count": 0, "activation": 0, "sip_count": 0}
+        for f in ["inflows", "gross_sales", "net_sales", "txn_count", "activation", "sip_count"]:
             rgn[key][f] += c.get(f, 0) or 0
     result = list(rgn.values())
     for r in result:
@@ -115,7 +123,7 @@ def aggregate_raw_data(records: List[Dict], db: Session) -> List[Dict]:
 
     # Group by (trdate, emp_code or bic_name)
     groups: Dict = defaultdict(lambda: {
-        "txn_count": 0, "inflows": 0.0,
+        "txn_count": 0, "inflows": 0.0, "gross_sales": 0.0, "outflows": 0.0,
         "bic_name": "", "emp_code": "",
         "cluster_name": "", "manager_name": "", "region_name": ""
     })
@@ -136,10 +144,18 @@ def aggregate_raw_data(records: List[Dict], db: Session) -> List[Dict]:
         key = (trdate, ec if ec else bic_name)
 
         g = groups[key]
-        g["txn_count"]   += 1
-        g["inflows"]     += float(r.get("inflows", 0) or 0)
-        g["bic_name"]    = g["bic_name"] or bic_name
-        g["emp_code"]    = g["emp_code"] or ec
+        amount = float(r.get("inflows", 0) or 0)
+        sub_tr = str(r.get("sub_trtype", "") or r.get("trtype", "") or "").strip()
+
+        g["txn_count"] += 1
+        g["inflows"]   += amount
+        if _is_outflow(sub_tr):
+            g["outflows"] += amount
+        else:
+            g["gross_sales"] += amount
+
+        g["bic_name"]  = g["bic_name"] or bic_name
+        g["emp_code"]  = g["emp_code"] or ec
         # Use first non-empty cluster/region/manager found for this BIC
         for f in ["cluster_name", "manager_name", "region_name"]:
             if not g[f] and r.get(f):
@@ -150,6 +166,8 @@ def aggregate_raw_data(records: List[Dict], db: Session) -> List[Dict]:
     for (trdate, _key), g in groups.items():
         if not g["emp_code"] and not g["bic_name"]:
             continue
+        gross = round(g["gross_sales"], 2)
+        net   = round(gross - g["outflows"], 2)
         result.append({
             "trdate":       trdate,
             "date":         trdate,
@@ -160,6 +178,8 @@ def aggregate_raw_data(records: List[Dict], db: Session) -> List[Dict]:
             "region_name":  g["region_name"],
             "txn_count":    g["txn_count"],
             "inflows":      round(g["inflows"], 2),
+            "gross_sales":  gross,
+            "net_sales":    net,
             "activation":   0,
             "sip_count":    g["txn_count"],
             "avg_ticket":   round(g["inflows"] / g["txn_count"], 2) if g["txn_count"] else 0,
@@ -222,6 +242,7 @@ def process_and_write(parsed: Dict, db: Session, season_id: int = None) -> Dict:
             manager_name = r.get("manager_name", ""),
             region_name  = r.get("region_name", ""),
             inflows      = r.get("inflows", 0),
+            gross_sales  = r.get("gross_sales", r.get("inflows", 0)),
             net_sales    = r.get("net_sales", 0),
             txn_count    = int(r.get("txn_count", 0)),
             activation   = int(r.get("activation", 0)),
@@ -258,8 +279,10 @@ def process_and_write(parsed: Dict, db: Session, season_id: int = None) -> Dict:
                     season_id=season_id, date=d, module=module,
                     cluster_name=c["cluster_name"], manager_name=c["manager_name"],
                     region_name=c["region_name"], inflows=c["inflows"],
+                    gross_sales=c.get("gross_sales", c["inflows"]),
+                    net_sales=c.get("net_sales", 0),
                     txn_count=c["txn_count"], activation=c["activation"],
-                    avg_ticket=c["avg_ticket"], net_sales=c.get("net_sales", 0)
+                    avg_ticket=c["avg_ticket"]
                 ))
             rows_written += len(cluster_agg)
 
@@ -272,8 +295,10 @@ def process_and_write(parsed: Dict, db: Session, season_id: int = None) -> Dict:
                 db.add(RegionData(
                     season_id=season_id, date=d, module=module,
                     region_name=rg["region_name"], inflows=rg["inflows"],
+                    gross_sales=rg.get("gross_sales", rg["inflows"]),
+                    net_sales=rg.get("net_sales", 0),
                     txn_count=rg["txn_count"], activation=rg["activation"],
-                    avg_ticket=rg["avg_ticket"], net_sales=rg.get("net_sales", 0)
+                    avg_ticket=rg["avg_ticket"]
                 ))
             rows_written += len(region_agg)
 

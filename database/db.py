@@ -97,6 +97,7 @@ class RegionData(Base):
     txn_count   = Column(Integer, default=0)
     activation  = Column(Integer, default=0)
     avg_ticket  = Column(Float, default=0)
+    gross_sales = Column(Float, default=0)
     net_sales   = Column(Float, default=0)
     sip_count   = Column(Integer, default=0)
     created_at  = Column(DateTime, default=datetime.utcnow)
@@ -116,6 +117,7 @@ class ClusterData(Base):
     txn_count    = Column(Integer, default=0)
     activation   = Column(Integer, default=0)
     avg_ticket   = Column(Float, default=0)
+    gross_sales  = Column(Float, default=0)
     net_sales    = Column(Float, default=0)
     created_at   = Column(DateTime, default=datetime.utcnow)
 
@@ -136,6 +138,7 @@ class BICData(Base):
     txn_count    = Column(Integer, default=0)
     activation   = Column(Integer, default=0)
     avg_ticket   = Column(Float, default=0)
+    gross_sales  = Column(Float, default=0)
     net_sales    = Column(Float, default=0)
     sip_count    = Column(Integer, default=0)
     sip_live     = Column(Integer, default=0)
