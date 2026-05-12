@@ -1073,6 +1073,10 @@ def delete_data_by_date(
     deleted_counts["cluster_rows"] = c.count()
     c.delete(synchronize_session=False)
 
+    ds = db.query(DailySnapshot).filter(DailySnapshot.date == date)
+    deleted_counts["daily_snapshots"] = ds.count()
+    ds.delete(synchronize_session=False)
+
     ul = db.query(UploadLog).filter(UploadLog.module == module, UploadLog.date_tag == date)
     deleted_counts["upload_logs"] = ul.count()
     ul.delete(synchronize_session=False)
