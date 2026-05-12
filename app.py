@@ -258,40 +258,58 @@ def get_kpi_overall(
     u: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    rq = db.query(RegionData)
-    if date:
-        rq = rq.filter(RegionData.date <= date)
-    region_rows = rq.all()
+    MODULES = ["wa", "savings", "po3", "wsip", "sip"]
 
-    if not region_rows:
-        return {"date": date or "YTD", "data": None,
+    all_region_rows = []
+    all_bic_rows    = []
+
+    for mod in MODULES:
+        # Latest date for this module (optionally capped by the date param)
+        rq = db.query(func.max(RegionData.date)).filter(RegionData.module == mod)
+        if date:
+            rq = rq.filter(RegionData.date <= date)
+        latest_r = rq.scalar()
+        if latest_r:
+            all_region_rows += db.query(RegionData).filter(
+                RegionData.module == mod,
+                RegionData.date   == latest_r
+            ).all()
+
+        bq = db.query(func.max(BICData.date)).filter(BICData.module == mod)
+        if date:
+            bq = bq.filter(BICData.date <= date)
+        latest_b = bq.scalar()
+        if latest_b:
+            all_bic_rows += db.query(BICData).filter(
+                BICData.module == mod,
+                BICData.date   == latest_b
+            ).all()
+
+    if not all_region_rows:
+        return {"date": date or "latest", "data": None,
                 "message": "No data available yet"}
 
-    ti  = sum(r.inflows     or 0 for r in region_rows)
-    tt  = sum(r.txn_count   or 0 for r in region_rows)
-    ta  = sum(r.activation  or 0 for r in region_rows)
-    tgs = sum(r.gross_sales or 0 for r in region_rows)
-    tns = sum(r.net_sales   or 0 for r in region_rows)
-    active_regions = len(set(r.region_name for r in region_rows))
+    ti  = sum(r.inflows     or 0 for r in all_region_rows)
+    tt  = sum(r.txn_count   or 0 for r in all_region_rows)
+    ta  = sum(r.activation  or 0 for r in all_region_rows)
+    tgs = sum(r.gross_sales or 0 for r in all_region_rows)
+    tns = sum(r.net_sales   or 0 for r in all_region_rows)
 
-    bq = db.query(BICData)
-    if date:
-        bq = bq.filter(BICData.date <= date)
-    bic_rows = bq.all()
-    active_bics     = len(set(r.emp_code     for r in bic_rows))
-    active_clusters = len(set(r.cluster_name for r in bic_rows))
+    active_regions  = len(set(r.region_name  for r in all_region_rows))
+    active_bics     = len(set(r.emp_code     for r in all_bic_rows))
+    active_clusters = len(set(r.cluster_name for r in all_bic_rows))
 
     return {
-        "date":               date or "YTD",
-        "total_inflows":      ti,
-        "total_txn":          tt,
-        "total_activation":   ta,
-        "avg_ticket":         round(ti / tt, 2) if tt else 0,
-        "total_gross_sales":  tgs,
-        "total_net_sales":    tns,
-        "active_regions":     active_regions,
-        "active_bics":        active_bics,
-        "active_clusters":    active_clusters,
+        "date":              date or "latest",
+        "total_inflows":     ti,
+        "total_txn":         tt,
+        "total_activation":  ta,
+        "avg_ticket":        round(ti / tt, 2) if tt else 0,
+        "total_gross_sales": tgs,
+        "total_net_sales":   tns,
+        "active_regions":    active_regions,
+        "active_bics":       active_bics,
+        "active_clusters":   active_clusters,
     }
 
 # ══ RANKINGS ══════════════════════════════════════════
