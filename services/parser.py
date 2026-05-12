@@ -1,11 +1,18 @@
 # services/parser.py — Excel MIS file parser
 # Handles both BIC-DATA (aggregated) and DATA (raw transactions) sheets.
 # DATA sheets use TRDATE for date-wise breakdown.
+#
+# CHANGES vs previous version:
+#   - parse_data_sheet (WA path): builds 3-tier bic_map + extracts sip_arns_by_date
+#     from SIP-DATA sheet. No longer returns a flat arn_data_arns list.
+#   - New helpers: _extract_bic_map_from_df, _extract_sip_arns_by_date
+#   - Non-WA modules: dead ARN-DATA reading code removed.
+#   - Return dict always includes bic_map and sip_arns_by_date keys (empty for non-WA).
 
 import logging
 import pandas as pd
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 from datetime import datetime
 
 logger = logging.getLogger("bfam.parser")
@@ -255,102 +262,271 @@ def _process_data_df(df: pd.DataFrame, col_map: Dict, module: str) -> pd.DataFra
     df = df[present].copy()
     df = df.rename(columns={c: col_map[c] for c in present})
 
-    # Skip system accounts
     if 'bic_name' in df.columns:
         df = df[~df['bic_name'].astype(str).str.strip().str.lower().isin(SKIP_NAMES)]
         df = df[df['bic_name'].notna()
                 & (df['bic_name'].astype(str).str.strip() != '')
                 & (df['bic_name'].astype(str).str.strip().str.upper() != 'NONE')]
 
-    # Parse dates
     if 'trdate' in df.columns:
         df['trdate'] = df['trdate'].apply(_parse_date)
         df = df[df['trdate'].notna()]
 
-    # Clean emp codes
     if 'emp_code' in df.columns:
         df['emp_code'] = df['emp_code'].apply(_clean_emp)
 
-    # Numeric
     if 'inflows' in df.columns:
         df['inflows'] = pd.to_numeric(df['inflows'], errors='coerce').fillna(0)
 
-    # String cleanup
     for col in ['bic_name','cluster_name','manager_name','region_name','sub_trtype','trtype']:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
             df[col] = df[col].replace({'None': '', 'nan': '', 'NAN': ''})
 
-    # PO3/WSIP: filter by SUB-TRTYPE
     if module == 'po3' and 'sub_trtype' in df.columns:
         df = df[df['sub_trtype'].str.upper().str.contains('POWER', na=False)]
     elif module == 'wsip' and 'sub_trtype' in df.columns:
         df = df[df['sub_trtype'].str.upper().str.contains('WEALTH', na=False)]
 
-    # Filter real regions
     if 'region_name' in df.columns:
         df = df[df['region_name'].isin(REAL_REGIONS) | (df['region_name'] == '')]
 
     return df.reset_index(drop=True)
 
 
+# ── NEW: WA-specific bic_map / sip_arns_by_date helpers ──────────────────────
+
+def _extract_bic_map_from_df(df: pd.DataFrame, arn_col: str) -> Dict:
+    """
+    Build ARN → bic_info dict from a raw (un-renamed) dataframe.
+    Used to construct the 3-tier bic_map for the WA module.
+
+    Args:
+        df:      Raw dataframe (columns not yet renamed).
+        arn_col: Name of the column holding the ARN (TRS_AGENT / AGENT / BROKER).
+
+    Returns:
+        {arn: {bic_name, emp_code, cluster, manager, region}}
+    """
+    result: Dict = {}
+    df = df.copy()
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    cols = set(df.columns)
+
+    if arn_col not in cols:
+        logger.warning(f"[Parser] _extract_bic_map_from_df: column '{arn_col}' not found")
+        return result
+
+    field_map = {
+        'BIC_OWNER':      'bic_name',
+        'EMPLOYEE CODE':  'emp_code',
+        'CLUSTER':        'cluster',
+        'CLUSTER MANAGER':'manager',
+        'REGION':         'region',
+    }
+
+    for _, row in df.iterrows():
+        arn = str(row.get(arn_col, '')).strip()
+        if not arn or arn.lower() in ('nan', 'none', ''):
+            continue
+        entry: Dict = {}
+        for src, dst in field_map.items():
+            if src in cols:
+                v = str(row.get(src, '')).strip()
+                if v and v.lower() not in ('nan', 'none'):
+                    entry[dst] = _clean_emp(v) if dst == 'emp_code' else v
+        if entry:
+            result[arn] = entry
+
+    return result
+
+
+def _extract_sip_arns_by_date(df: pd.DataFrame) -> Dict[str, Set[str]]:
+    """
+    Extract {date_str: set(arns)} from the WA SIP-DATA sheet,
+    keyed by TRI_REGISTRATION_DATE with ARNs from the AGENT column.
+    """
+    sip_arns: Dict[str, Set[str]] = {}
+    df = df.copy()
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    cols = set(df.columns)
+
+    date_col = 'TRI_REGISTRATION_DATE' if 'TRI_REGISTRATION_DATE' in cols else None
+    arn_col  = 'AGENT' if 'AGENT' in cols else None
+
+    if not date_col or not arn_col:
+        logger.warning("[Parser] SIP-DATA missing TRI_REGISTRATION_DATE or AGENT column — "
+                       "no SIP ARNs extracted")
+        return sip_arns
+
+    for _, row in df.iterrows():
+        arn = str(row.get(arn_col, '')).strip()
+        if not arn or arn.lower() in ('nan', 'none', ''):
+            continue
+        date = _parse_date(row.get(date_col))
+        if not date:
+            continue
+        sip_arns.setdefault(date, set()).add(arn)
+
+    logger.info(f"[Parser] SIP-DATA: {sum(len(v) for v in sip_arns.values())} ARNs "
+                f"across {len(sip_arns)} dates")
+    return sip_arns
+
+
+def _extract_data_activation_arns_by_date(df: pd.DataFrame) -> Dict[str, Set[str]]:
+    """
+    Collect activation ARNs from the raw (unfiltered) DATA sheet grouped by date.
+
+    Must be called BEFORE _process_data_df so that rows with empty BIC_OWNER
+    are not lost — per the WA pseudocode, activation ARN collection happens on
+    ALL rows regardless of BIC_OWNER. Those ARNs are later attributed to BICs
+    via bic_map lookup in the processor.
+
+    Activation types: Purchase + Switch-In (SIP is excluded, same as pseudocode).
+    """
+    result: Dict[str, Set[str]] = {}
+    df = df.copy()
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    cols = set(df.columns)
+
+    required = {'TRTYPE', 'TRDATE', 'TRS_AGENT'}
+    if not required.issubset(cols):
+        missing = required - cols
+        logger.warning(f"[Parser] _extract_data_activation_arns_by_date: "
+                       f"missing columns {missing} — activation ARNs not extracted from DATA")
+        return result
+
+    # Match the same set used in processor ACTIVATION_TRTYPES
+    _ACTIVATION_RAW = {'PURCHASE', 'SWITCH-IN', 'SWITCHIN', 'SWITCH IN'}
+
+    for _, row in df.iterrows():
+        trtype = str(row.get('TRTYPE', '') or '').strip().upper()
+        if not any(a in trtype for a in _ACTIVATION_RAW):
+            continue
+        arn = str(row.get('TRS_AGENT', '') or '').strip()
+        if not arn or arn.lower() in ('nan', 'none', ''):
+            continue
+        date = _parse_date(row.get('TRDATE'))
+        if not date:
+            continue
+        result.setdefault(date, set()).add(arn)
+
+    total_arns = sum(len(v) for v in result.values())
+    logger.info(f"[Parser] DATA activation ARNs (raw): {total_arns} across {len(result)} dates")
+    return result
+
+
+# ── MAIN PARSE FUNCTIONS ──────────────────────────────────────────────────────
+
 def parse_data_sheet(filepath: Path, module: str) -> Dict:
     """
     Parse raw DATA / SIP DATA / SIP-DATA sheets.
     Returns transaction-level records tagged with trdate.
     These are aggregated by date+BIC in the processor.
+
+    For the WA module, also returns:
+      bic_map          — 3-tier ARN→BIC lookup (DATA < SIP-DATA < ARN-DATA)
+      sip_arns_by_date — {date: set(arns)} from SIP-DATA's TRI_REGISTRATION_DATE
+    Both are empty dicts for all other modules.
     """
     errors: List[str] = []
     records: List[Dict] = []
-    arn_data_arns: List[str] = []
+    bic_map: Dict = {}
+    sip_arns_by_date: Dict[str, Set[str]] = {}
+    data_activation_arns_by_date: Dict[str, Set[str]] = {}  # WA only
 
     try:
         wb = pd.ExcelFile(filepath, engine="openpyxl")
         available = set(wb.sheet_names)
 
+        # ── SIP module ────────────────────────────────────────────────────────
         if module == 'sip':
-            # SIP: read SIP DATA and/or SIP-DATA sheets
-            for sheet_name, col_map in [('SIP DATA', SIP_DATA_COLUMNS), ('SIP-DATA', SIPDATA_COLUMNS)]:
+            for sheet_name, col_map in [
+                ('SIP DATA', SIP_DATA_COLUMNS),
+                ('SIP-DATA', SIPDATA_COLUMNS),
+            ]:
                 if sheet_name not in available:
                     continue
                 df = pd.read_excel(filepath, sheet_name=sheet_name, engine="openpyxl")
                 df = _process_data_df(df, col_map, module)
                 records.extend(df.to_dict(orient='records'))
                 logger.info(f"[Parser] '{sheet_name}' sip → {len(df)} rows")
+
+        # ── All other modules (wa, savings, po3, wsip) ────────────────────────
         else:
-            # All other modules: read DATA sheet
             if 'DATA' not in available:
                 logger.info(f"[Parser] No DATA sheet in {filepath.name}")
-                return {"module": module, "level": "data_raw", "records": [], "row_count": 0, "errors": [], "arn_data_arns": []}
-            df = pd.read_excel(filepath, sheet_name='DATA', engine="openpyxl")
-            df = _process_data_df(df, DATA_SHEET_COLUMNS, module)
+                return {
+                    "module": module, "level": "data_raw",
+                    "records": [], "row_count": 0, "errors": [],
+                    "bic_map": {}, "sip_arns_by_date": {},
+                }
+
+            # Read the raw DATA sheet once (used both for records and bic_map tier 3)
+            data_df_raw = pd.read_excel(filepath, sheet_name='DATA', engine="openpyxl")
+
+            # ── WA: build 3-tier bic_map + extract sip_arns_by_date ──────────
+            if module == 'wa':
+                # Tier 3 — lowest priority: DATA sheet, TRS_AGENT column
+                bic_map.update(_extract_bic_map_from_df(data_df_raw, 'TRS_AGENT'))
+                logger.info(f"[Parser] bic_map tier3 (DATA/TRS_AGENT): {len(bic_map)} ARNs")
+
+                # Extract activation ARNs from ALL DATA rows BEFORE bic_name filtering.
+                # Rows with empty BIC_OWNER but valid TRS_AGENT + activation TRTYPE
+                # must still contribute their ARN to the date pool (pseudocode Step 3).
+                data_activation_arns_by_date = _extract_data_activation_arns_by_date(data_df_raw)
+
+                # Tier 2: SIP-DATA sheet, AGENT column
+                #         Also extract sip_arns_by_date keyed by TRI_REGISTRATION_DATE
+                if 'SIP-DATA' in available:
+                    try:
+                        sip_df_raw = pd.read_excel(
+                            filepath, sheet_name='SIP-DATA', engine="openpyxl")
+                        tier2 = _extract_bic_map_from_df(sip_df_raw, 'AGENT')
+                        bic_map.update(tier2)
+                        sip_arns_by_date = _extract_sip_arns_by_date(sip_df_raw)
+                        logger.info(f"[Parser] bic_map tier2 (SIP-DATA/AGENT): "
+                                    f"+{len(tier2)} ARNs, total {len(bic_map)}")
+                    except Exception as e:
+                        errors.append(f"SIP-DATA sheet error: {e}")
+                        logger.warning(f"[Parser] SIP-DATA read error: {e}")
+                else:
+                    logger.warning(f"[Parser] No SIP-DATA sheet in {filepath.name} — "
+                                   "SIP ARNs will not be included in WA activation")
+
+                # Tier 1 — highest priority: ARN-DATA sheet, BROKER column (overwrites all)
+                if 'ARN-DATA' in available:
+                    try:
+                        arn_df_raw = pd.read_excel(
+                            filepath, sheet_name='ARN-DATA', engine="openpyxl")
+                        tier1 = _extract_bic_map_from_df(arn_df_raw, 'BROKER')
+                        bic_map.update(tier1)
+                        logger.info(f"[Parser] bic_map tier1 (ARN-DATA/BROKER): "
+                                    f"+{len(tier1)} ARNs, total {len(bic_map)}")
+                    except Exception as e:
+                        errors.append(f"ARN-DATA sheet error: {e}")
+                        logger.warning(f"[Parser] ARN-DATA read error: {e}")
+                else:
+                    logger.warning(f"[Parser] No ARN-DATA sheet in {filepath.name}")
+
+            # Process DATA rows (all modules)
+            df = _process_data_df(data_df_raw, DATA_SHEET_COLUMNS, module)
             records.extend(df.to_dict(orient='records'))
             logger.info(f"[Parser] 'DATA' {module} → {len(df)} rows")
-
-            # Read ARN-DATA sheet if present
-            if 'ARN-DATA' in available:
-                try:
-                    arn_df = pd.read_excel(filepath, sheet_name='ARN-DATA', engine="openpyxl")
-                    arn_df.columns = [str(c).strip().upper() for c in arn_df.columns]
-                    if 'BROKER' in arn_df.columns:
-                        raw_arns = arn_df['BROKER'].astype(str).str.strip()
-                        arn_data_arns = [a for a in raw_arns if a and a.lower() not in ('nan', 'none', '')]
-                        logger.info(f"[Parser] 'ARN-DATA' → {len(arn_data_arns)} ARNs")
-                except Exception as e:
-                    errors.append(f"ARN-DATA sheet error: {e}")
-                    logger.warning(f"[Parser] ARN-DATA read error: {e}")
 
     except Exception as e:
         errors.append(f"DATA sheet error: {e}")
         logger.exception(f"[Parser] DATA sheet error for {module}: {e}")
 
     return {
-        "module":        module,
-        "level":         "data_raw",
-        "records":       records,
-        "row_count":     len(records),
-        "errors":        errors,
-        "arn_data_arns": arn_data_arns,
+        "module":                       module,
+        "level":                        "data_raw",
+        "records":                      records,
+        "row_count":                    len(records),
+        "errors":                       errors,
+        "bic_map":                      bic_map,                      # populated for WA only
+        "sip_arns_by_date":             sip_arns_by_date,             # populated for WA only
+        "data_activation_arns_by_date": data_activation_arns_by_date, # populated for WA only
     }
 
 
@@ -380,4 +556,7 @@ def parse_file(filepath: Path, module: str, date: str = None) -> Dict:
     return {
         "module": module, "date": date, "level": level,
         "records": records, "row_count": len(records), "errors": errors,
+        # bic_map / sip_arns_by_date / data_activation_arns_by_date not applicable
+        # for BIC-DATA aggregated uploads
+        "bic_map": {}, "sip_arns_by_date": {}, "data_activation_arns_by_date": {},
     }
