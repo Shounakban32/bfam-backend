@@ -476,6 +476,8 @@ async def upload_file(
 
         modules_in_file = get_all_modules(tmp_path)
 
+        all_dates_written = set()
+
         for mod in modules_in_file:
             if mod == "unknown":
                 continue
@@ -486,6 +488,7 @@ async def upload_file(
                 result = process_and_write(mod_parsed, db, season_id=sid)
                 rows_written += result["rows_written"]
                 errors.extend(result["errors"])
+                all_dates_written.update(result.get("dates_written", []))
 
         # ── Pass 2: DATA sheets (raw transactions by TRDATE) ─
         for mod in modules_in_file:
@@ -497,6 +500,7 @@ async def upload_file(
                 result = process_and_write(data_parsed, db, season_id=sid)
                 rows_written += result["rows_written"]
                 errors.extend(result["errors"])
+                all_dates_written.update(result.get("dates_written", []))
 
         if rows_parsed == 0:
             upload_status = "failed"
@@ -526,7 +530,8 @@ async def upload_file(
             uploaded_by=admin.emp_code, filename=filename, module=module,
             date_tag=date_tag, rows_parsed=rows_parsed, rows_written=rows_written,
             status=upload_status, error_detail="\n".join(errors) if errors else None,
-            duration_sec=duration
+            duration_sec=duration,
+            dates_written=sorted(all_dates_written) if all_dates_written else None
         ))
         db.commit()
         _audit(db, admin.emp_code, "UPLOAD_FILE", "data", filename,

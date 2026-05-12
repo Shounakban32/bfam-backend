@@ -210,8 +210,9 @@ class UploadLog(Base):
     rows_written = Column(Integer, default=0)
     status       = Column(String(20), default="success")   # success|partial|failed
     error_detail = Column(Text, nullable=True)
-    duration_sec = Column(Float, nullable=True)
-    uploaded_at  = Column(DateTime, default=datetime.utcnow)
+    duration_sec   = Column(Float, nullable=True)
+    dates_written  = Column(JSON, nullable=True)   # actual transaction dates written to DB
+    uploaded_at    = Column(DateTime, default=datetime.utcnow)
 
 
 class AuditLog(Base):

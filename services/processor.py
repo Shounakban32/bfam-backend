@@ -521,4 +521,4 @@ def process_and_write(parsed: Dict, db: Session, season_id: int = None) -> Dict:
         errors.append(f"DB write failed: {e}")
         logger.error(f"[Processor] DB write failed: {e}")
 
-    return {"rows_written": rows_written, "errors": errors}
+    return {"rows_written": rows_written, "errors": errors, "dates_written": sorted(dates_present)}
