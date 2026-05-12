@@ -251,6 +251,49 @@ def get_kpi(module: str="wa", date: Optional[str]=None,
             "regions_active":len(rows)}
 
 
+# ══ OVERALL / CROSS-MODULE KPI ════════════════════════
+@app.get("/kpi/overall", tags=["Dashboard"])
+def get_kpi_overall(
+    date: Optional[str] = None,
+    u: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    rq = db.query(RegionData)
+    if date:
+        rq = rq.filter(RegionData.date <= date)
+    region_rows = rq.all()
+
+    if not region_rows:
+        return {"date": date or "YTD", "data": None,
+                "message": "No data available yet"}
+
+    ti  = sum(r.inflows     or 0 for r in region_rows)
+    tt  = sum(r.txn_count   or 0 for r in region_rows)
+    ta  = sum(r.activation  or 0 for r in region_rows)
+    tgs = sum(r.gross_sales or 0 for r in region_rows)
+    tns = sum(r.net_sales   or 0 for r in region_rows)
+    active_regions = len(set(r.region_name for r in region_rows))
+
+    bq = db.query(BICData)
+    if date:
+        bq = bq.filter(BICData.date <= date)
+    bic_rows = bq.all()
+    active_bics     = len(set(r.emp_code     for r in bic_rows))
+    active_clusters = len(set(r.cluster_name for r in bic_rows))
+
+    return {
+        "date":               date or "YTD",
+        "total_inflows":      ti,
+        "total_txn":          tt,
+        "total_activation":   ta,
+        "avg_ticket":         round(ti / tt, 2) if tt else 0,
+        "total_gross_sales":  tgs,
+        "total_net_sales":    tns,
+        "active_regions":     active_regions,
+        "active_bics":        active_bics,
+        "active_clusters":    active_clusters,
+    }
+
 # ══ RANKINGS ══════════════════════════════════════════
 @app.get("/rankings/regions", tags=["Rankings"])
 def region_rankings(module:str="wa", date:Optional[str]=None, sort_by:str="inflows",
