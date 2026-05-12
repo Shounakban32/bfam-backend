@@ -1082,37 +1082,52 @@ def delete_data_by_date(
     u: User = Depends(require_coe),
     db: Session = Depends(get_db)
 ):
-    deleted_counts = {}
+    deleted_counts = {"region_rows": 0, "bic_rows": 0, "cluster_rows": 0,
+                      "daily_snapshots": 0, "upload_logs": 0}
 
-    r = db.query(RegionData).filter(RegionData.module == module, RegionData.date == date)
-    deleted_counts["region_rows"] = r.count()
-    r.delete(synchronize_session=False)
+    # Look up the actual transaction dates that were written during this upload
+    upload_entry = db.query(UploadLog).filter(
+        UploadLog.module == module,
+        UploadLog.date_tag == date
+    ).order_by(UploadLog.uploaded_at.desc()).first()
 
-    b = db.query(BICData).filter(BICData.module == module, BICData.date == date)
-    deleted_counts["bic_rows"] = b.count()
-    b.delete(synchronize_session=False)
+    dates_to_delete = (
+        upload_entry.dates_written
+        if upload_entry and upload_entry.dates_written
+        else [date]   # fallback for old uploads that predate this fix
+    )
 
-    c = db.query(ClusterData).filter(ClusterData.module == module, ClusterData.date == date)
-    deleted_counts["cluster_rows"] = c.count()
-    c.delete(synchronize_session=False)
+    for d in dates_to_delete:
+        r = db.query(RegionData).filter(RegionData.module == module, RegionData.date == d)
+        deleted_counts["region_rows"] += r.count()
+        r.delete(synchronize_session=False)
 
-    ds = db.query(DailySnapshot).filter(DailySnapshot.date == date)
-    deleted_counts["daily_snapshots"] = ds.count()
-    ds.delete(synchronize_session=False)
+        b = db.query(BICData).filter(BICData.module == module, BICData.date == d)
+        deleted_counts["bic_rows"] += b.count()
+        b.delete(synchronize_session=False)
+
+        c = db.query(ClusterData).filter(ClusterData.module == module, ClusterData.date == d)
+        deleted_counts["cluster_rows"] += c.count()
+        c.delete(synchronize_session=False)
+
+        ds = db.query(DailySnapshot).filter(DailySnapshot.date == d)
+        deleted_counts["daily_snapshots"] += ds.count()
+        ds.delete(synchronize_session=False)
 
     ul = db.query(UploadLog).filter(UploadLog.module == module, UploadLog.date_tag == date)
-    deleted_counts["upload_logs"] = ul.count()
+    deleted_counts["upload_logs"] += ul.count()
     ul.delete(synchronize_session=False)
 
     db.commit()
 
     _audit(db, u.emp_code, "DELETE_DATA", "module_date", f"{module}/{date}",
            old_val=None, new_val=deleted_counts,
-           notes=f"Deleted all data for module={module} date={date}")
+           notes=f"Deleted {module}/{date} → actual dates: {dates_to_delete}")
 
-    logger.info(f"[Delete] {u.emp_code} deleted {module}/{date}: {deleted_counts}")
-    return {"message": f"Data deleted for {module} on {date}", "deleted": deleted_counts}
-
+    logger.info(f"[Delete] {u.emp_code} deleted {module}/{date} "
+                f"(dates: {dates_to_delete}): {deleted_counts}")
+    return {"message": f"Data deleted for {module} on {date}",
+            "dates_deleted": dates_to_delete, "deleted": deleted_counts}
 
 @app.get("/setup/create-first-admin", tags=["Setup"])
 def create_first_admin(db: Session = Depends(get_db)):
